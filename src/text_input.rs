@@ -1,22 +1,32 @@
 //! Reactive text input widget and adjacent utilities, a thin wrapper around [`bevy_ui_text_input`] integrated with [`Signal`]s.
 
-use std::{ops::Not, sync::{Arc, OnceLock}};
+use std::{
+    ops::Not,
+    sync::{Arc, OnceLock},
+};
 
-use bevy_input_focus::InputFocus;
-use bevy_ecs::system::*;
+use bevy_app::prelude::*;
 use bevy_ecs::prelude::*;
+use bevy_ecs::system::*;
+use bevy_input_focus::InputFocus;
+use bevy_picking::prelude::*;
+use bevy_text::{TextColor, TextFont};
 use bevy_ui::prelude::*;
 use bevy_utils::prelude::*;
-use bevy_app::prelude::*;
-use bevy_picking::prelude::*;
-use bevy_text::{cosmic_text::{Edit, Selection}, TextColor, TextFont};
+use cosmic_text::{Edit, Selection};
 
 use crate::impl_haalka_methods;
 
 use super::{
-    el::El, element::{ElementWrapper, Nameable, UiRootable}, pointer_event_aware::{PointerEventAware, CursorOnHoverable}, raw::{RawElWrapper, register_system}, mouse_wheel_scrollable::MouseWheelScrollable,
-    utils::clone, viewport_mutable::ViewportMutable, global_event_aware::GlobalEventAware,
-    raw::{observe, utils::remove_system_holder_on_remove}
+    el::El,
+    element::{ElementWrapper, Nameable, UiRootable},
+    global_event_aware::GlobalEventAware,
+    mouse_wheel_scrollable::MouseWheelScrollable,
+    pointer_event_aware::{CursorOnHoverable, PointerEventAware},
+    raw::{RawElWrapper, register_system},
+    raw::{observe, utils::remove_system_holder_on_remove},
+    utils::clone,
+    viewport_mutable::ViewportMutable,
 };
 use apply::Apply;
 use bevy_ui_text_input::{actions::TextInputAction, text_input_pipeline::TextInputPipeline, *};
@@ -49,37 +59,35 @@ impl TextInput {
     #[allow(missing_docs, clippy::new_without_default)]
     pub fn new() -> Self {
         let el = El::<Node>::new().update_raw_el(|raw_el| {
-            raw_el
-                .insert((
-                    TextInputNode {
-                        clear_on_submit: false,
-                        ..default()
-                    },
-                    Pickable::default(),
-                    LastSignalText::default()
-                ))
+            raw_el.insert((
+                TextInputNode {
+                    clear_on_submit: false,
+                    ..default()
+                },
+                Pickable::default(),
+                LastSignalText::default(),
+            ))
         });
         Self { el }
     }
 
     /// Run a function with this input's [`TextInputBuffer`] with access to [`ResMut<TextInputPipeline>`].
-    pub fn with_buffer(
-        self,
-        f: impl FnOnce(Mut<TextInputBuffer>, ResMut<TextInputPipeline>) + Send + 'static,
-    ) -> Self {
+    pub fn with_buffer(self, f: impl FnOnce(Mut<TextInputBuffer>, ResMut<TextInputPipeline>) + Send + 'static) -> Self {
         // .on_spawn_with_system doesn't work because it requires FnMut
-        self.update_raw_el(|raw_el| raw_el.on_spawn(move |world, entity| {
-            // TODO: is this stuff repeated for every call ?
-            #[allow(clippy::type_complexity)]
-            let mut system_state: SystemState<(
-                Query<&mut TextInputBuffer>,
-                ResMut<TextInputPipeline>,
-            )> = SystemState::new(world);
-            let (mut buffers, text_input_pipeline) = system_state.get_mut(world);
-            if let Ok(buffer) = buffers.get_mut(entity) {
-                f(buffer, text_input_pipeline)
-            }
-        }))
+        self.update_raw_el(|raw_el| {
+            raw_el.on_spawn(move |world, entity| {
+                // TODO: is this stuff repeated for every call ?
+                #[allow(clippy::type_complexity)]
+                let mut system_state: SystemState<(
+                    Query<&mut TextInputBuffer>,
+                    ResMut<TextInputPipeline>,
+                )> = SystemState::new(world);
+                let (mut buffers, text_input_pipeline) = system_state.get_mut(world);
+                if let Ok(buffer) = buffers.get_mut(entity) {
+                    f(buffer, text_input_pipeline)
+                }
+            })
+        })
     }
 
     /// Reactively run a function with this input's [`TextInputBuffer`] and the output of the [`Signal`] with access to [`ResMut<TextInputPipeline>`].
@@ -92,8 +100,8 @@ impl TextInput {
             raw_el.on_signal_with_system(
                 signal,
                 move |In((entity, value)): In<(Entity, T)>,
-                    mut buffers: Query<&mut TextInputBuffer>,
-                    text_input_pipeline: ResMut<TextInputPipeline>| {
+                      mut buffers: Query<&mut TextInputBuffer>,
+                      text_input_pipeline: ResMut<TextInputPipeline>| {
                     if let Ok(buffer) = buffers.get_mut(entity) {
                         f(buffer, text_input_pipeline, value)
                     };
@@ -143,20 +151,22 @@ impl TextInput {
     /// this input's [`Entity`] and its current focused state.
     pub fn on_focused_change_with_system<Marker>(
         self,
-        handler: impl IntoSystem<In<(Entity, bool,)>, (), Marker> + Send + 'static,
+        handler: impl IntoSystem<In<(Entity, bool)>, (), Marker> + Send + 'static,
     ) -> Self {
         self.update_raw_el(|raw_el| {
             let system_holder = Arc::new(OnceLock::new());
             raw_el
-            .with_entity(|mut entity| { entity.insert(Focusable { is_focused: false }); })
-            .on_spawn(clone!((system_holder) move |world, entity| {
-                let system = register_system(world, handler);
-                let _ = system_holder.set(system);
-                observe(world, entity, move |event: Trigger<FocusedChange>, mut commands: Commands| {
-                    commands.run_system_with(system, (entity, event.event().0))
-                });
-            }))
-            .apply(remove_system_holder_on_remove(system_holder.clone()))
+                .with_entity(|mut entity| {
+                    entity.insert(Focusable { is_focused: false });
+                })
+                .on_spawn(clone!((system_holder) move |world, entity| {
+                    let system = register_system(world, handler);
+                    let _ = system_holder.set(system);
+                    observe(world, entity, move |event: On<FocusedChange>, mut commands: Commands| {
+                        commands.run_system_with(system, (entity, event.event().focused))
+                    });
+                }))
+                .apply(remove_system_holder_on_remove(system_holder.clone()))
         })
     }
 
@@ -173,9 +183,11 @@ impl TextInput {
     /// Set the focused state of this input.
     pub fn focus_option(mut self, focus_option: impl Into<Option<bool>>) -> Self {
         if Into::<Option<bool>>::into(focus_option).unwrap_or(false) {
-            self = self.update_raw_el(|raw_el| raw_el.on_spawn_with_system(|In(entity), mut commands: Commands| {
-                commands.insert_resource(InputFocus(Some(entity)));
-            }));
+            self = self.update_raw_el(|raw_el| {
+                raw_el.on_spawn_with_system(|In(entity), mut commands: Commands| {
+                    commands.insert_resource(InputFocus(Some(entity)));
+                })
+            });
         }
         self
     }
@@ -192,31 +204,42 @@ impl TextInput {
     ) -> Self {
         if let Some(focus_signal) = focus_signal_option.into() {
             self = self.update_raw_el(|raw_el| {
-                raw_el.on_signal_with_system(focus_signal, |In((entity, focus)), mut focused_option: ResMut<InputFocus>| {
-                    if focus {
-                        focused_option.0 = Some(entity);
-                    } else if let Some(focused) = focused_option.0 && focused == entity {
-                        focused_option.0 = None;
-                    }
-                })
+                raw_el.on_signal_with_system(
+                    focus_signal,
+                    |In((entity, focus)), mut focused_option: ResMut<InputFocus>| {
+                        if focus {
+                            focused_option.0 = Some(entity);
+                        } else if let Some(focused) = focused_option.0
+                            && focused == entity
+                        {
+                            focused_option.0 = None;
+                        }
+                    },
+                )
             })
         }
         self
     }
 
     /// When the string in this input changes, run a `handler` [`System`] which takes [`In`](System::In) the [`Entity`] of this input's [`Entity`] and the new [`String`].
-    pub fn on_change_with_system<Marker>(self, handler: impl IntoSystem<In<(Entity, String)>, (), Marker> + Send + 'static) -> Self {
+    pub fn on_change_with_system<Marker>(
+        self,
+        handler: impl IntoSystem<In<(Entity, String)>, (), Marker> + Send + 'static,
+    ) -> Self {
         self.update_raw_el(|raw_el| {
             let system_holder = Arc::new(OnceLock::new());
-            raw_el.on_spawn(clone!((system_holder) move |world, entity| {
-                let system = register_system(world, handler);
-                let _ = system_holder.set(system);
-                observe(world, entity, move |change: Trigger<TextInputChange>, mut commands: Commands| {
-                    commands.run_system_with(system, (change.target(), change.event().0.clone()));
-                });
-            }))
-            .with_entity(|mut entity| { entity.insert_if_new((ListenToChanges, TextInputContents::default())); })
-            .apply(remove_system_holder_on_remove(system_holder))
+            raw_el
+                .on_spawn(clone!((system_holder) move |world, entity| {
+                    let system = register_system(world, handler);
+                    let _ = system_holder.set(system);
+                    observe(world, entity, move |change: On<TextInputChange>, mut commands: Commands| {
+                        commands.run_system_with(system, (change.entity, change.text.clone()));
+                    });
+                }))
+                .with_entity(|mut entity| {
+                    entity.insert_if_new((ListenToChanges, TextInputContents::default()));
+                })
+                .apply(remove_system_holder_on_remove(system_holder))
         })
     }
 
@@ -246,10 +269,7 @@ impl TextInput {
 #[derive(Component, Default)]
 struct LastSignalText(String);
 
-fn queue_set_text_actions(
-    text_input_queue: &mut TextInputQueue,
-    text: String,
-) {
+fn queue_set_text_actions(text_input_queue: &mut TextInputQueue, text: String) {
     for action in [
         TextInputAction::Edit(actions::TextInputEdit::SelectAll),
         TextInputAction::Edit(actions::TextInputEdit::Paste(text)),
@@ -261,18 +281,36 @@ fn queue_set_text_actions(
 #[derive(Component)]
 struct ListenToChanges;
 
-#[derive(Event)]
-struct TextInputChange(String);
+/// Event triggered when text input content changes.
+#[derive(bevy_ecs::event::EntityEvent)]
+struct TextInputChange {
+    /// Target entity for this event (Bevy 0.17 EntityEvent).
+    entity: Entity,
+    /// The new text content.
+    text: String,
+}
 
 #[allow(clippy::type_complexity)]
-fn on_change(contents: Query<(Entity, &TextInputContents), (Changed<TextInputContents>, With<ListenToChanges>)>, mut commands: Commands) {
+fn on_change(
+    contents: Query<(Entity, &TextInputContents), (Changed<TextInputContents>, With<ListenToChanges>)>,
+    mut commands: Commands,
+) {
     for (entity, contents) in contents.iter() {
-        commands.trigger_targets(TextInputChange(contents.get().to_string()), entity);
+        commands.trigger(TextInputChange {
+            entity,
+            text: contents.get().to_string(),
+        });
     }
 }
 
-#[derive(Event)]
-struct FocusedChange(bool);
+/// Event triggered when focus state changes.
+#[derive(bevy_ecs::event::EntityEvent)]
+struct FocusedChange {
+    /// Target entity for this event (Bevy 0.17 EntityEvent).
+    entity: Entity,
+    /// Whether the entity is now focused.
+    focused: bool,
+}
 
 #[derive(Component)]
 struct Focusable {
@@ -289,11 +327,11 @@ fn on_focus_changed(
             // TODO: remove condition when https://github.com/Dimchikkk/bevy_cosmic_edit/issues/145
             if focusable.is_focused.not() {
                 focusable.is_focused = true;
-                commands.trigger_targets(FocusedChange(true), entity);
+                commands.trigger(FocusedChange { entity, focused: true });
             }
         } else if focusable.is_focused {
             focusable.is_focused = false;
-            commands.trigger_targets(FocusedChange(false), entity);
+            commands.trigger(FocusedChange { entity, focused: false });
         }
     }
 }
@@ -323,7 +361,9 @@ fn clear_selection_on_focus_change(
     mut previous_input_focus: Local<Option<Entity>>,
 ) {
     if *previous_input_focus != input_focus.0 {
-        if let Some(entity) = *previous_input_focus && let Ok(mut buffer) = buffers.get_mut(entity) {
+        if let Some(entity) = *previous_input_focus
+            && let Ok(mut buffer) = buffers.get_mut(entity)
+        {
             buffer
                 .editor
                 .borrow_with(&mut text_input_pipeline.font_system)
@@ -334,14 +374,12 @@ fn clear_selection_on_focus_change(
 }
 
 pub(super) fn plugin(app: &mut App) {
-    app
-    .add_plugins(TextInputPlugin)
-    .add_systems(
+    app.add_plugins(TextInputPlugin).add_systems(
         Update,
         (
             on_change.run_if(any_with_component::<ListenToChanges>),
             on_focus_changed.run_if(resource_changed_or_removed::<InputFocus>),
-            clear_selection_on_focus_change.run_if(not(resource_exists::<ClearSelectionOnFocusChangeDisabled>))
+            clear_selection_on_focus_change.run_if(not(resource_exists::<ClearSelectionOnFocusChangeDisabled>)),
         )
             .run_if(any_with_component::<TextInputNode>),
     );

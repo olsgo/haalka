@@ -75,14 +75,14 @@ fn square(i: usize) -> impl Element {
             // Maybe use `observe` here to get the actual entity in case of bubbling?
             raw_el
                 .insert((Pickable::default(), DragOffset::default()))
-                .on_event_with_system::<Pointer<Pressed>, _>(
-                    |In((_, click)): In<(_, Pointer<Pressed>)>,
+                .on_event_with_system::<Pointer<Press>, _>(
+                    |In((_, click)): In<(_, Pointer<Press>)>,
                      mut dragging: ResMut<Dragging>,
                      mut max_z_index: ResMut<MaxZIndex>,
                      mut z_indices: Query<&mut GlobalZIndex>,
                      mut drag_offsets: Query<&mut DragOffset>,
                      nodes: Query<&Node>| {
-                        let node = nodes.get(click.target).unwrap();
+                        let node = nodes.get(click.entity).unwrap();
                         let left = match node.left {
                             Val::Px(px) => px,
                             _ => 0.0,
@@ -95,19 +95,17 @@ fn square(i: usize) -> impl Element {
                             click.pointer_location.position.x - left,
                             click.pointer_location.position.y - top,
                         );
-                        drag_offsets.get_mut(click.target).unwrap().0 = offset;
-                        dragging.0 = Some(click.target);
+                        drag_offsets.get_mut(click.entity).unwrap().0 = offset;
+                        dragging.0 = Some(click.entity);
                         max_z_index.0 += 1;
-                        if let Ok(mut z_index) = z_indices.get_mut(click.target) {
+                        if let Ok(mut z_index) = z_indices.get_mut(click.entity) {
                             z_index.0 = max_z_index.0;
                         }
                     },
                 )
-                .on_event_with_system::<Pointer<Released>, _>(
-                    |In(_): In<_>, mut dragging: ResMut<Dragging>| {
-                        dragging.0 = None;
-                    },
-                )
+                .on_event_with_system::<Pointer<Release>, _>(|In(_): In<_>, mut dragging: ResMut<Dragging>| {
+                    dragging.0 = None;
+                })
                 .on_signal_with_entity(POINTER_POSITION.signal(), |mut entity, pos| {
                     let this_entity_id = entity.id();
                     if let Some(dragging_entity) = entity.world().resource::<Dragging>().0

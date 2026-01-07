@@ -96,7 +96,7 @@ cfg_if::cfg_if! {
     if #[cfg(feature = "ui")] {
         use super::{column::Column, el::El, grid::Grid, raw::RawElWrapper, row::Row, stack::Stack};
         use bevy_ui::{prelude::*, widget::*, *};
-        use bevy_render::prelude::*;
+        use bevy_camera::visibility::{Visibility, InheritedVisibility, ViewVisibility};
         use bevy_text::prelude::*;
         use bevy_transform::prelude::*;
 

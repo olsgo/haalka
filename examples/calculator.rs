@@ -34,7 +34,7 @@ const HEIGHT: f32 = BUTTON_SIZE * 5. + GAP * 6.;
 fn textable_element(text_signal: impl Signal<Item = impl Into<String> + 'static> + Send + 'static) -> El<Node> {
     El::<Node>::new()
         .with_node(|mut node| node.border = UiRect::all(Val::Px(2.0)))
-        .border_color(BorderColor(Color::WHITE))
+        .border_color(BorderColor::all(Color::WHITE))
         .child(
             El::<Text>::new()
                 .text_font(TextFont::from_font_size(FONT_SIZE))

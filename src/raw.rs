@@ -16,7 +16,16 @@ use super::{
     raw::utils::remove_system_holder_on_remove,
 };
 use apply::Apply;
-use bevy_ecs::{component::*, error::*, prelude::*, system::*, world::*};
+use bevy_ecs::{
+    component::*,
+    error::*,
+    event::PropagateEntityTrigger,
+    lifecycle::HookContext,
+    prelude::*,
+    system::*,
+    traversal::Traversal,
+    world::*,
+};
 use bevy_log::error;
 use bevy_tasks::Task;
 use bevy_utils::prelude::*;
@@ -422,14 +431,16 @@ impl RawHaalkaEl {
         )
     }
 
-    /// Reactively send an [`Event`] based on this element's [`Entity`] and the output of the
+    /// Reactively send a [`Message`] based on this element's [`Entity`] and the output of the
     /// [`Signal`].
-    pub fn on_signal_send_event<T, E: Event>(
+    pub fn on_signal_send_message<T, M: bevy_ecs::message::Message>(
         self,
         signal: impl Signal<Item = T> + Send + 'static,
-        mut f: impl FnMut(Entity, T) -> E + Send + 'static,
+        mut f: impl FnMut(Entity, T) -> M + Send + 'static,
     ) -> Self {
-        self.on_signal(signal, move |entity, value| async_world().send_event(f(entity, value)))
+        self.on_signal(signal, move |entity, value| {
+            async_world().send_message(f(entity, value))
+        })
     }
 
     /// When this element receives an `E` [`Event`] and does not have a `Disabled`
@@ -437,31 +448,34 @@ impl RawHaalkaEl {
     /// and the [`Event`]; if the element has a `PropagationStopped` [`Component`], the
     /// event will not bubble up the hierarchy. If propagation is conditional on logic within the
     /// body of the `handler`, use [.observe](`Self::observe`) instead to access the mutable
-    /// [`Trigger<E>`] directly.
+    /// [`On<E>`] directly.
     pub fn on_event_with_system_disableable_propagation_stoppable<
-        E: Event + Clone,
+        E,
         Disabled: Component,
         PropagationStopped: Component,
         Marker,
     >(
         self,
         handler: impl IntoSystem<In<(Entity, E)>, (), Marker> + Send + 'static,
-    ) -> Self {
+    ) -> Self
+    where
+        E: Event + Clone,
+        for<'a> <E as Event>::Trigger<'a>: PropagationControl,
+    {
         let system_holder = Arc::new(OnceLock::new());
-        self
-            .on_spawn(clone!((system_holder) move |world, entity| {
-                let handler = register_system(world, handler);
-                let _ = system_holder.set(handler);
-                observe(world, entity, move |mut event: Trigger<E>, disabled: Query<&Disabled>, propagation_stopped: Query<&PropagationStopped>, mut commands: Commands| {
-                    if !disabled.contains(entity) {
-                        commands.run_system_with(handler, (entity, (*event).clone()));
-                        if propagation_stopped.contains(entity) {
-                            event.propagate(false);
-                        }
-                    }
-                });
-            }))
-            .apply(remove_system_holder_on_remove(system_holder))
+        self.on_spawn(clone!((system_holder) move |world, entity| {
+            let handler = register_system(world, handler);
+            let _ = system_holder.set(handler);
+            observe(world, entity, move |mut event: On<E>, disabled: Query<&Disabled>, propagation_stopped: Query<&PropagationStopped>, mut commands: Commands| {
+                if propagation_stopped.contains(entity) {
+                    event.trigger_mut().stop_propagation();
+                }
+                if !disabled.contains(entity) {
+                    commands.run_system_with(handler, (entity, event.event().clone()));
+                }
+            });
+        }))
+        .apply(remove_system_holder_on_remove(system_holder))
     }
 
     /// When this element receives an `E` [`Event`], run a [`System`] which takes
@@ -470,9 +484,7 @@ impl RawHaalkaEl {
         self,
         handler: impl IntoSystem<In<(Entity, E)>, (), Marker> + Send + 'static,
     ) -> Self {
-        self.on_event_with_system_disableable_propagation_stoppable::<E, EventHandlingDisabled<E>, EventPropagationStopped<E>, _>(
-            handler,
-        )
+        self.on_event_with_system_disableable::<E, EventHandlingDisabled<E>, _>(handler)
     }
 
     /// When this element receives an `E` [`Event`] and does not have a `Disabled`
@@ -482,9 +494,17 @@ impl RawHaalkaEl {
         self,
         handler: impl IntoSystem<In<(Entity, E)>, (), Marker> + Send + 'static,
     ) -> Self {
-        self.on_event_with_system_disableable_propagation_stoppable::<E, Disabled, EventPropagationStopped<E>, _>(
-            handler,
-        )
+        let system_holder = Arc::new(OnceLock::new());
+        self.on_spawn(clone!((system_holder) move |world, entity| {
+            let handler = register_system(world, handler);
+            let _ = system_holder.set(handler);
+            observe(world, entity, move |event: On<E>, disabled: Query<&Disabled>, mut commands: Commands| {
+                if !disabled.contains(entity) {
+                    commands.run_system_with(handler, (entity, event.event().clone()));
+                }
+            });
+        }))
+        .apply(remove_system_holder_on_remove(system_holder))
     }
 
     /// When this element receives an `E` [`Event`], run a [`System`] which takes
@@ -507,11 +527,14 @@ impl RawHaalkaEl {
     /// [`In`](`System::In`) this element's [`Entity`] and the [`Event`]; if the element has a
     /// `PropagationStopped` [`Component`], the event will not bubble up the hierarchy. If
     /// propagation is conditional on logic within the body of the `handler`, use
-    /// [.observe](`Self::observe`) instead to access the mutable [`Trigger<E>`] directly.
+    /// [.observe](`Self::observe`) instead to access the mutable [`On<E>`] directly.
     pub fn on_event_with_system_propagation_stoppable<E: Event + Clone, PropagationStopped: Component, Marker>(
         self,
         handler: impl IntoSystem<In<(Entity, E)>, (), Marker> + Send + 'static,
-    ) -> Self {
+    ) -> Self
+    where
+        for<'a> <E as Event>::Trigger<'a>: PropagationControl,
+    {
         self.on_event_with_system_disableable_propagation_stoppable::<E, EventHandlingDisabled<E>, PropagationStopped, _>(
             handler,
         )
@@ -525,12 +548,15 @@ impl RawHaalkaEl {
     /// needs frame perfect propagation stopping, use
     /// [`.on_event_with_system_propagation_stoppable`](Self::on_event_with_system_propagation_stoppable).
     /// If propagation is conditional on logic within the body of the `handler`, use
-    /// [.observe](`Self::observe`) instead to access the mutable [`Trigger<E>`] directly.
+    /// [.observe](`Self::observe`) instead to access the mutable [`On<E>`] directly.
     pub fn on_event_with_system_propagation_stoppable_signal<E: Event + Clone, Marker>(
         self,
         handler: impl IntoSystem<In<(Entity, E)>, (), Marker> + Send + 'static,
         propagation_stopped: impl Signal<Item = bool> + Send + 'static,
-    ) -> Self {
+    ) -> Self
+    where
+        for<'a> <E as Event>::Trigger<'a>: PropagationControl,
+    {
         self.component_signal::<EventPropagationStopped<E>, _>(
             propagation_stopped.map_true(|| EventPropagationStopped(PhantomData)),
         )
@@ -542,7 +568,10 @@ impl RawHaalkaEl {
     pub fn on_event_with_system_stop_propagation<E: Event + Clone, Marker>(
         self,
         handler: impl IntoSystem<In<(Entity, E)>, (), Marker> + Send + 'static,
-    ) -> Self {
+    ) -> Self
+    where
+        for<'a> <E as Event>::Trigger<'a>: PropagationControl,
+    {
         self.insert(EventPropagationStopped::<E>(PhantomData))
             .on_event_with_system_propagation_stoppable::<E, EventPropagationStopped<E>, _>(handler)
     }
@@ -578,11 +607,14 @@ impl RawHaalkaEl {
     /// When this element receives an `E` [`Event`], run a function with the [`Event`];
     /// if the element has a `PropagationStopped` [`Component`], the event will not bubble up
     /// the hierarchy. If propagation is conditional on logic within the body of the `handler`,
-    /// use [.observe](`Self::observe`) instead to access the mutable [`Trigger<E>`] directly.
+    /// use [.observe](`Self::observe`) instead to access the mutable [`On<E>`] directly.
     pub fn on_event_propagation_stoppable<E: Event + Clone, Marker, PropagationStopped: Component>(
         self,
         mut handler: impl FnMut(E) + Send + Sync + 'static,
-    ) -> Self {
+    ) -> Self
+    where
+        for<'a> <E as Event>::Trigger<'a>: PropagationControl,
+    {
         self.on_event_with_system_propagation_stoppable::<E, PropagationStopped, _>(move |In((_, event))| {
             handler(event)
         })
@@ -591,12 +623,15 @@ impl RawHaalkaEl {
     /// When this element receives an `E` [`Event`], run a function with the [`Event`],
     /// reactively controlling whether the event bubbles up the hierarchy with a [`Signal`].
     /// If propagation is conditional on logic within the  body of the `handler`, use
-    /// [.observe](`Self::observe`) instead to access the mutable [`Trigger<E>`] directly.
+    /// [.observe](`Self::observe`) instead to access the mutable [`On<E>`] directly.
     pub fn on_event_propagation_stoppable_signal<E: Event + Clone>(
         self,
         mut handler: impl FnMut(E) + Send + Sync + 'static,
         propagation_stopped: impl Signal<Item = bool> + Send + 'static,
-    ) -> Self {
+    ) -> Self
+    where
+        for<'a> <E as Event>::Trigger<'a>: PropagationControl,
+    {
         self.on_event_with_system_propagation_stoppable_signal(
             move |In((_, event))| handler(event),
             propagation_stopped,
@@ -608,7 +643,10 @@ impl RawHaalkaEl {
     pub fn on_event_stop_propagation<E: Event + Clone>(
         self,
         mut handler: impl FnMut(E) + Send + Sync + 'static,
-    ) -> Self {
+    ) -> Self
+    where
+        for<'a> <E as Event>::Trigger<'a>: PropagationControl,
+    {
         self.on_event_with_system_stop_propagation::<E, _>(move |In((_, event))| handler(event))
     }
 
@@ -620,13 +658,16 @@ impl RawHaalkaEl {
     /// frame perfect disabling and propagation stopping, use
     /// [`.on_event_with_system_disableable_propagation_stoppable`](Self::on_event_with_system_disableable_propagation_stoppable).
     /// If propagation is conditional on logic within the body of the `handler`, use
-    /// [.observe](`Self::observe`) instead to access the mutable [`Trigger<E>`] directly.
+    /// [.observe](`Self::observe`) instead to access the mutable [`On<E>`] directly.
     pub fn on_event_disableable_propagation_stoppable_signal<E: Event + Clone>(
         self,
         mut handler: impl FnMut(E) + Send + Sync + 'static,
         disabled: impl Signal<Item = bool> + Send + 'static,
         propagation_stopped: impl Signal<Item = bool> + Send + 'static,
-    ) -> Self {
+    ) -> Self
+    where
+        for<'a> <E as Event>::Trigger<'a>: PropagationControl,
+    {
         self
         .component_signal::<EventHandlingDisabled<E>, _>(disabled.map_true(|| EventHandlingDisabled(PhantomData)))
         .component_signal::<EventPropagationStopped<E>, _>(propagation_stopped.map_true(|| EventPropagationStopped(PhantomData)))
@@ -689,7 +730,7 @@ impl RawHaalkaEl {
 
 fn run_system_with_entity<I: Send + 'static>(
     entity: Entity,
-    id: SystemId<In<(Entity, I)>>,
+    id: SystemId<In<(Entity, I)>, ()>,
     input: I,
 ) -> impl Command<Result> {
     move |world: &mut World| -> Result {
@@ -749,6 +790,19 @@ struct EventHandlingDisabled<E: Event>(PhantomData<E>);
 
 #[derive(Component)]
 struct EventPropagationStopped<E: Event>(PhantomData<E>);
+
+#[doc(hidden)]
+pub trait PropagationControl {
+    fn stop_propagation(&mut self);
+}
+
+impl<const AUTO_PROPAGATE: bool, E: EntityEvent, T: Traversal<E>> PropagationControl
+    for PropagateEntityTrigger<AUTO_PROPAGATE, E, T>
+{
+    fn stop_propagation(&mut self) {
+        self.propagate = false;
+    }
+}
 
 /// Thin wrapper trait around [`RawHaalkaEl`] to allow consumers to target custom types when
 /// composing [`RawHaalkaEl`]s.

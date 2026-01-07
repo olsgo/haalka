@@ -1,8 +1,8 @@
 //! Demonstrates how to forward ECS changes to UI.
 
 mod utils;
-use bevy_ecs::component::HookContext;
-use bevy_render::view::RenderLayers;
+use bevy_ecs::lifecycle::HookContext;
+use bevy_camera::visibility::RenderLayers;
 use utils::*;
 
 use std::time::Duration;
@@ -34,8 +34,8 @@ fn main() {
             (tick_emitter::<Spawner, SpawnDot>, tick_emitter::<Despawner, DespawnDot>),
         )
         .add_observer(
-            |_: Trigger<SpawnDot>,
-             mut rng: GlobalEntropy<ChaCha8Rng>,
+            |_: On<SpawnDot>,
+             mut rng: Single<&mut ChaCha8Rng, With<GlobalRng>>,
              mut meshes: ResMut<Assets<Mesh>>,
              mut materials: ResMut<Assets<ColorMaterial>>,
              mut commands: Commands| {
@@ -52,11 +52,11 @@ fn main() {
             },
         )
         .add_observer(
-            |_: Trigger<DespawnDot>,
+            |_: On<DespawnDot>,
              dots: Query<Entity, With<Dot>>,
-             mut rng: GlobalEntropy<ChaCha8Rng>,
+             mut rng: Single<&mut ChaCha8Rng, With<GlobalRng>>,
              mut commands: Commands| {
-                if let Some(dot) = dots.iter().choose(rng.as_mut()) {
+                if let Some(dot) = dots.iter().choose(&mut *rng) {
                     commands.entity(dot).despawn();
                 }
             },
@@ -368,8 +368,10 @@ fn tick_emitter<T: Component, E: Event + Default>(
     mut spawner: Single<&mut MutableTimer, With<T>>,
     time: Res<Time>,
     mut commands: Commands,
-) {
-    if spawner.timer.tick(time.delta()).finished() {
+) where
+    for<'a> <E as Event>::Trigger<'a>: Default,
+{
+    if spawner.timer.tick(time.delta()).is_finished() {
         commands.trigger(E::default());
         spawner.timer.reset();
     }

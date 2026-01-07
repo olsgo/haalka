@@ -45,12 +45,24 @@ pub struct Viewport {
 /// [`Component`] for holding the [`Scene`] and [`Viewport`]. Also an [`Event`] which is
 /// [`Trigger`]ed when the [`Viewport`] or [`Scene`] of a [`MutableViewport`] changes; only entities
 /// with the [`OnViewportLocationChange`] component receive this event.
-#[derive(Component, Event, Default)]
+#[derive(Component, bevy_ecs::event::EntityEvent)]
 pub struct MutableViewport {
+    /// Target entity for this event (Bevy 0.17 EntityEvent).
+    pub entity: Entity,
     #[allow(missing_docs)]
     pub scene: Scene,
     #[allow(missing_docs)]
     pub viewport: Viewport,
+}
+
+impl Default for MutableViewport {
+    fn default() -> Self {
+        Self {
+            entity: Entity::PLACEHOLDER,
+            scene: Default::default(),
+            viewport: Default::default(),
+        }
+    }
 }
 
 /// [`MutableViewport`]s with this [`Component`] receive [`MutableViewport`] events.
@@ -110,8 +122,8 @@ pub trait ViewportMutable: RawElWrapper {
             .on_spawn(clone!((system_holder) move |world, entity| {
                 let system = register_system(world, handler);
                 let _ = system_holder.set(system);
-                observe(world, entity, move |viewport_location_change: Trigger<MutableViewport>, mut commands: Commands| {
-                    let &MutableViewport { scene, viewport } = viewport_location_change.event();
+                observe(world, entity, move |viewport_location_change: On<MutableViewport>, mut commands: Commands| {
+                    let &MutableViewport { entity: _, scene, viewport } = viewport_location_change.event();
                     commands.run_system_with(system, (entity, (scene, viewport)));
                 });
             }))
@@ -142,7 +154,7 @@ pub trait ViewportMutable: RawElWrapper {
                             && last_signal_pos.x.to_bits() != x.to_bits()
                         {
                             last_signal_pos.x = x;
-                            scroll_pos.offset_x = x;
+                            scroll_pos.x = x;
                         }
                     },
                 )
@@ -168,7 +180,7 @@ pub trait ViewportMutable: RawElWrapper {
                             && last_signal_pos.y.to_bits() != y.to_bits()
                         {
                             last_signal_pos.y = y;
-                            scroll_pos.offset_y = y;
+                            scroll_pos.y = y;
                         }
                     },
                 )
@@ -235,7 +247,10 @@ impl SceneViewport<'_, '_> {
             x: viewport_width,
             y: viewport_height,
         }) = self.logical_rect.get(entity).as_ref().map(Rect::size)
-            && let Ok(&ScrollPosition { offset_x, offset_y }) = self.scroll_positions.get(entity)
+            && let Ok(&ScrollPosition(Vec2 {
+                x: offset_x,
+                y: offset_y,
+            })) = self.scroll_positions.get(entity)
         {
             let mut min = Vec2::MAX;
             let mut max = Vec2::MIN;
@@ -274,10 +289,18 @@ fn dispatch_viewport_location_change(
     checked_viewport_listeners: &mut HashSet<Entity>,
 ) {
     if let Some((scene, viewport)) = scene_viewports.get(entity) {
-        if let Ok(mut entity) = commands.get_entity(entity) {
-            entity.insert(MutableViewport { scene, viewport });
+        if let Ok(mut entity_commands) = commands.get_entity(entity) {
+            entity_commands.insert(MutableViewport {
+                entity,
+                scene,
+                viewport,
+            });
         }
-        commands.trigger_targets(MutableViewport { scene, viewport }, entity);
+        commands.trigger(MutableViewport {
+            entity,
+            scene,
+            viewport,
+        });
         checked_viewport_listeners.insert(entity);
     }
 }

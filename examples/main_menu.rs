@@ -100,7 +100,7 @@ impl Button {
                         Color::BLACK
                     }
                 })
-                .map(BorderColor)
+                .map(BorderColor::all)
         };
         let background_color_signal = {
             selected_hovered_broadcaster
@@ -185,7 +185,7 @@ fn menu_base(width: f32, height: f32, title: &str) -> Column<Node> {
             node.width = Val::Px(width);
             node.height = Val::Px(height);
         })
-        .border_color(BorderColor(Color::BLACK))
+        .border_color(BorderColor::all(Color::BLACK))
         .background_color(BackgroundColor(NORMAL_BUTTON))
         .item(
             El::<Node>::new()
@@ -245,11 +245,11 @@ impl Checkbox {
                     .update_raw_el(clone!((checked) move |raw_el| {
                         raw_el.on_event_disableable_signal::<MenuInput>(
                             move |event| {
-                                match event {
-                                    MenuInput::Select => {
+                                match event.input {
+                                    MenuInputKind::Select => {
                                         checked.set_neq(!checked.get());
                                     },
-                                    MenuInput::Delete => {
+                                    MenuInputKind::Delete => {
                                         checked.set(false);
                                     },
                                     _ => ()
@@ -305,11 +305,11 @@ impl RadioGroup {
                 .update_raw_el(|raw_el| {
                     raw_el.on_event_disableable_signal::<MenuInput>(
                         clone!((options, selected) move |event| {
-                            match event {
-                                MenuInput::Left | MenuInput::Right => {
+                            match event.input {
+                                MenuInputKind::Left | MenuInputKind::Right => {
                                     let selected_option = selected.lock_ref().as_ref().copied();
                                     let (mut i, step) = {
-                                        if matches!(event, MenuInput::Left) {
+                                        if matches!(event.input, MenuInputKind::Left) {
                                             (selected_option.unwrap_or(options.lock_ref().len() - 1) as isize, -1)
                                         } else {
                                             (selected_option.unwrap_or(0) as isize, 1)
@@ -320,7 +320,7 @@ impl RadioGroup {
                                     }
                                     selected.set(Some(i as usize));
                                 },
-                                MenuInput::Delete => {
+                                MenuInputKind::Delete => {
                                     selected.take();
                                 },
                                 _ => ()
@@ -410,12 +410,12 @@ impl IterableOptions {
                     let right_flasher = Mutable::new(None);
                     raw_el.on_event_disableable_signal::<MenuInput>(
                         clone!((options, selected, left_pressed, right_pressed) move |event| {
-                            match event {
-                                MenuInput::Left | MenuInput::Right => {
+                            match event.input {
+                                MenuInputKind::Left | MenuInputKind::Right => {
                                     let i_option = options.lock_ref().iter().position(|option| option == &*selected.lock_ref()).map(|i| i as isize);
                                     if let Some(mut i) = i_option {
                                         let step = {
-                                            (if matches!(event, MenuInput::Left) {
+                                            (if matches!(event.input, MenuInputKind::Left) {
                                                 left_pressed.set(true);
                                                 left_flasher.set(Some(spawn(clone!((left_pressed) async move {
                                                     sleep(Duration::from_millis(FLASH_MS as u64)).await;
@@ -514,9 +514,9 @@ impl Slider {
                     .update_raw_el(|raw_el| {
                         raw_el.on_event_disableable_signal::<MenuInput>(
                             clone!((left) move |event| {
-                                match event {
-                                    MenuInput::Left | MenuInput::Right => {
-                                        let dir = if matches!(event, MenuInput::Left) { -1. } else { 1. };
+                                match event.input {
+                                    MenuInputKind::Left | MenuInputKind::Right => {
+                                        let dir = if matches!(event.input, MenuInputKind::Left) { -1. } else { 1. };
                                         left.update(move |left| (left + dir * max * 0.001).max(0.).min(max));
                                     },
                                     _ => ()
@@ -660,11 +660,11 @@ impl Dropdown {
             .apply(|element| focus_on_signal(element, controlling.signal()))
             .update_raw_el(|raw_el| {
                 raw_el.observe::<MenuInput, _, _>(
-                    clone!((controlling, show_dropdown, hovered, options, options_hovered, selected) move |mut event: Trigger<MenuInput>| {
+                    clone!((controlling, show_dropdown, hovered, options, options_hovered, selected) move |mut event: On<MenuInput>| {
                         // TODO: this is cringe, but the component driven alternative is equally cringe ? (need to use .observe here directly since we need to stop propagation conditionally within the body of the callback)
                         if controlling.get() {
-                            match *event {
-                                MenuInput::Up | MenuInput::Down => {
+                            match event.input {
+                                MenuInputKind::Up | MenuInputKind::Down => {
                                     if show_dropdown.get() {
                                         event.propagate(false);
                                         let hovered_option = options_hovered.lock_ref().iter().position(|hovered| hovered.get());
@@ -672,7 +672,7 @@ impl Dropdown {
                                             options_hovered.lock_ref()[i].set(false);
                                         }
                                         let (mut i, step) = {
-                                            if matches!(*event, MenuInput::Up) {
+                                            if matches!(event.input, MenuInputKind::Up) {
                                                 (hovered_option.unwrap_or(options.lock_ref().len() - 1) as isize, -1)
                                             } else {
                                                 (hovered_option.unwrap_or(0) as isize, 1)
@@ -691,7 +691,7 @@ impl Dropdown {
                                         hovered.set_neq(false);
                                     }
                                 }
-                                MenuInput::Select => {
+                                MenuInputKind::Select => {
                                     hovered.set_neq(!show_dropdown.get());
                                     let hovered_option = options_hovered.lock_ref().iter().position(|hovered| hovered.get());
                                     if let Some(i) = hovered_option {
@@ -703,7 +703,7 @@ impl Dropdown {
                                         hovered.set(false);
                                     }
                                 },
-                                MenuInput::Back => {
+                                MenuInputKind::Back => {
                                     if show_dropdown.get() {
                                         event.propagate(false);
                                         for hovering in options_hovered.lock_ref().iter() {
@@ -713,7 +713,7 @@ impl Dropdown {
                                     }
                                     hovered.set(false);
                                 },
-                                MenuInput::Delete => {
+                                MenuInputKind::Delete => {
                                     if clearable {
                                         selected.take();
                                     }
@@ -860,19 +860,19 @@ fn sub_menu_child_hover_manager<E: Element>(element: E, hovereds: MutableVec<Mut
     element.update_raw_el(|raw_el| {
         raw_el.on_event::<MenuInput>(clone!((hovereds) move |event| {
             let hovereds_lock = hovereds.lock_ref();
-            match event {
-                MenuInput::Up | MenuInput::Down => {
+            match event.input {
+                MenuInputKind::Up | MenuInputKind::Down => {
                     let hovered_option = hovereds_lock.iter().position(|hovered| hovered.get());
                     if let Some(i) = hovered_option {
                         hovereds_lock[i].set(false);
-                        let new_i = if matches!(event, MenuInput::Up) { i + l - 1 } else { i + 1 } % l;
+                        let new_i = if matches!(event.input, MenuInputKind::Up) { i + l - 1 } else { i + 1 } % l;
                         hovereds_lock[new_i].set(true);
                     } else {
-                        let i = if matches!(event, MenuInput::Up) { hovereds_lock.len() - 1 } else { 0 };
+                        let i = if matches!(event.input, MenuInputKind::Up) { hovereds_lock.len() - 1 } else { 0 };
                         hovereds_lock[i].set(true);
                     }
                 },
-                MenuInput::Back => {
+                MenuInputKind::Back => {
                     if hovereds_lock.iter().any(|hovered| hovered.get()) {
                         for hovered in hovereds_lock.iter() {
                             hovered.set(false)
@@ -1060,31 +1060,31 @@ fn menu() -> impl Element {
                 .apply(|element| focus_on_signal(element, SHOW_SUB_MENU.signal_ref(Option::is_none)))
                 .update_raw_el(|raw_el| {
                     raw_el.on_event_disableable_signal::<MenuInput>(
-                        move |event| match event {
-                            MenuInput::Up | MenuInput::Down => {
+                        move |event| match event.input {
+                            MenuInputKind::Up | MenuInputKind::Down => {
                                 if let Some(cur_sub_menu) = SUB_MENU_SELECTED.get() {
                                     if let Some(i) = SubMenu::iter().position(|sub_menu| cur_sub_menu == sub_menu) {
                                         let sub_menus = SubMenu::iter().collect::<Vec<_>>();
-                                        SUB_MENU_SELECTED.set(if matches!(event, MenuInput::Down) {
+                                        SUB_MENU_SELECTED.set(if matches!(event.input, MenuInputKind::Down) {
                                             sub_menus.iter().rev().cycle().nth(sub_menus.len() - i).copied()
                                         } else {
                                             sub_menus.iter().cycle().nth(i + 1).copied()
                                         })
                                     }
                                 } else {
-                                    SUB_MENU_SELECTED.set_neq(Some(if matches!(event, MenuInput::Up) {
+                                    SUB_MENU_SELECTED.set_neq(Some(if matches!(event.input, MenuInputKind::Up) {
                                         SubMenu::iter().next_back().unwrap()
                                     } else {
                                         SubMenu::iter().next().unwrap()
                                     }));
                                 }
                             }
-                            MenuInput::Select => {
+                            MenuInputKind::Select => {
                                 if let Some(sub_menu) = SUB_MENU_SELECTED.get() {
                                     SHOW_SUB_MENU.set_neq(Some(sub_menu));
                                 }
                             }
-                            MenuInput::Back => {
+                            MenuInputKind::Back => {
                                 SUB_MENU_SELECTED.take();
                             }
                             _ => (),
@@ -1183,8 +1183,8 @@ static MISC_DEMO_SETTINGS: LazyLock<MiscDemoSettings> = LazyLock::new(|| MiscDem
     iterable_options: Mutable::new("option 1".to_string()),
 });
 
-#[derive(Clone, Copy, Component)]
-enum MenuInput {
+#[derive(Clone, Copy)]
+enum MenuInputKind {
     Up,
     Down,
     Left,
@@ -1194,10 +1194,11 @@ enum MenuInput {
     Delete,
 }
 
-impl Event for MenuInput {
-    type Traversal = &'static ChildOf;
-
-    const AUTO_PROPAGATE: bool = true;
+#[derive(Clone, Copy, EntityEvent)]
+#[entity_event(propagate, auto_propagate)]
+struct MenuInput {
+    entity: Entity,
+    input: MenuInputKind,
 }
 
 #[derive(Resource)]
@@ -1214,7 +1215,7 @@ enum PressedType {
 
 fn rate_limited_menu_input(
     pressed_type: PressedType,
-    input: MenuInput,
+    input: MenuInputKind,
     entity: Entity,
     rate_limiter: &mut Timer,
     time: &Res<Time>,
@@ -1222,14 +1223,14 @@ fn rate_limited_menu_input(
 ) -> bool {
     match pressed_type {
         PressedType::Pressed => {
-            if rate_limiter.tick(time.delta()).finished() {
-                commands.trigger_targets(input, entity);
+            if rate_limiter.tick(time.delta()).is_finished() {
+                commands.trigger(MenuInput { entity, input });
                 rate_limiter.reset();
             }
             true
         }
         PressedType::JustPressed => {
-            commands.trigger_targets(input, entity);
+            commands.trigger(MenuInput { entity, input });
             rate_limiter.reset();
             true
         }
@@ -1259,7 +1260,7 @@ fn keyboard_menu_input_events(
         };
         let handled = rate_limited_menu_input(
             pressed_type,
-            MenuInput::Up,
+            MenuInputKind::Up,
             focused_entity.0,
             &mut menu_input_rate_limiter.0,
             &time,
@@ -1271,23 +1272,23 @@ fn keyboard_menu_input_events(
     }
     let slider_focused = sliders.get(focused_entity.0).is_ok();
     for (key, input) in [
-        (KeyCode::ArrowUp, MenuInput::Up),
-        (KeyCode::ArrowDown, MenuInput::Down),
-        (KeyCode::ArrowLeft, MenuInput::Left),
-        (KeyCode::ArrowRight, MenuInput::Right),
-        (KeyCode::KeyW, MenuInput::Up),
-        (KeyCode::KeyS, MenuInput::Down),
-        (KeyCode::KeyA, MenuInput::Left),
-        (KeyCode::KeyD, MenuInput::Right),
-        (KeyCode::Enter, MenuInput::Select),
-        (KeyCode::Escape, MenuInput::Back),
-        (KeyCode::Backspace, MenuInput::Back),
-        (KeyCode::Tab, MenuInput::Down),
-        (KeyCode::Space, MenuInput::Select),
-        (KeyCode::Delete, MenuInput::Delete),
+        (KeyCode::ArrowUp, MenuInputKind::Up),
+        (KeyCode::ArrowDown, MenuInputKind::Down),
+        (KeyCode::ArrowLeft, MenuInputKind::Left),
+        (KeyCode::ArrowRight, MenuInputKind::Right),
+        (KeyCode::KeyW, MenuInputKind::Up),
+        (KeyCode::KeyS, MenuInputKind::Down),
+        (KeyCode::KeyA, MenuInputKind::Left),
+        (KeyCode::KeyD, MenuInputKind::Right),
+        (KeyCode::Enter, MenuInputKind::Select),
+        (KeyCode::Escape, MenuInputKind::Back),
+        (KeyCode::Backspace, MenuInputKind::Back),
+        (KeyCode::Tab, MenuInputKind::Down),
+        (KeyCode::Space, MenuInputKind::Select),
+        (KeyCode::Delete, MenuInputKind::Delete),
     ] {
         let rate_limiter = {
-            if slider_focused && matches!(input, MenuInput::Left | MenuInput::Right) {
+            if slider_focused && matches!(input, MenuInputKind::Left | MenuInputKind::Right) {
                 &mut slider_rate_limiter.0
             } else {
                 &mut menu_input_rate_limiter.0
@@ -1324,16 +1325,16 @@ fn gamepad_menu_input_events(
     let slider_focused = sliders.get(focused_entity.0).is_ok();
     for gamepad in gamepads.iter() {
         for (button, input) in [
-            (GamepadButton::DPadUp, MenuInput::Up),
-            (GamepadButton::DPadDown, MenuInput::Down),
-            (GamepadButton::DPadLeft, MenuInput::Left),
-            (GamepadButton::DPadRight, MenuInput::Right),
-            (GamepadButton::North, MenuInput::Delete),
-            (GamepadButton::South, MenuInput::Select),
-            (GamepadButton::East, MenuInput::Back),
+            (GamepadButton::DPadUp, MenuInputKind::Up),
+            (GamepadButton::DPadDown, MenuInputKind::Down),
+            (GamepadButton::DPadLeft, MenuInputKind::Left),
+            (GamepadButton::DPadRight, MenuInputKind::Right),
+            (GamepadButton::North, MenuInputKind::Delete),
+            (GamepadButton::South, MenuInputKind::Select),
+            (GamepadButton::East, MenuInputKind::Back),
         ] {
             let rate_limiter = {
-                if slider_focused && matches!(input, MenuInput::Left | MenuInput::Right) {
+                if slider_focused && matches!(input, MenuInputKind::Left | MenuInputKind::Right) {
                     &mut slider_rate_limiter.0
                 } else {
                     &mut menu_input_rate_limiter.0
