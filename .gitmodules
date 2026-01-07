@@ -1,4 +1,4 @@
 [submodule "MoonZoon"]
 	path = MoonZoon
-	url = https://github.com/databasedav/MoonZoon.git
+	url = https://github.com/olsgo/MoonZoon.git
 	branch = haalka
